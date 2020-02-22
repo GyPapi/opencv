@@ -119,7 +119,7 @@ cv::Mat findHomography1D(cv::InputArray _src,cv::InputArray _dst)
     cv::Mat b = cv::Mat::zeros(count,1,CV_64FC1);
 
     // fill A;b and perform singular value decomposition
-    // it is assumed that w is one for both cooridnates
+    // it is assumed that w is one for both coordinates
     // h22 is kept to 1
     switch(src_n.type())
     {
@@ -282,9 +282,9 @@ void FastX::rotate(float angle,const cv::Mat &img,cv::Size size,cv::Mat &out)con
     }
     else
     {
-        cv::Mat_<double> m = cv::getRotationMatrix2D(cv::Point2f(float(img.cols*0.5),float(img.rows*0.5)),float(angle/CV_PI*180),1);
-        m.at<double>(0,2) += 0.5*(size.width-img.cols);
-        m.at<double>(1,2) += 0.5*(size.height-img.rows);
+        cv::Matx23d m = cv::getRotationMatrix2D(cv::Point2f(float(img.cols*0.5),float(img.rows*0.5)),float(angle/CV_PI*180),1);
+        m(0,2) += 0.5*(size.width-img.cols);
+        m(1,2) += 0.5*(size.height-img.rows);
         cv::warpAffine(img,out,m,size);
     }
 }
@@ -698,15 +698,6 @@ Ellipse::Ellipse(const cv::Point2f &_center, const cv::Size2f &_axes, float _ang
     cosf(cos(-_angle)),
     sinf(sin(-_angle))
 {
-}
-
-Ellipse::Ellipse(const Ellipse &other)
-{
-    center = other.center;
-    axes= other.axes;
-    angle= other.angle;
-    cosf = other.cosf;
-    sinf = other.sinf;
 }
 
 const cv::Size2f &Ellipse::getAxes()const
@@ -2483,7 +2474,7 @@ int Chessboard::Board::validateCorners(const cv::Mat &data,cv::flann::Index &fla
     std::vector<cv::Point2f>::const_iterator iter1 = points.begin();
     for(;iter1 != points.end();++iter1)
     {
-        // we do not have to check for NaN because of getCorners(flase)
+        // we do not have to check for NaN because of getCorners(false)
         std::vector<cv::Point2f>::const_iterator iter2 = iter1+1;
         for(;iter2 != points.end();++iter2)
             if(*iter1 == *iter2)
@@ -3016,7 +3007,7 @@ Chessboard::Board Chessboard::detectImpl(const Mat& gray,std::vector<cv::Mat> &f
     if(keypoints_seed.empty())
         return Chessboard::Board();
 
-    // check how many points are likely a checkerbord corner
+    // check how many points are likely a checkerboard corner
     float response = fabs(keypoints_seed.front().response*MIN_RESPONSE_RATIO);
     std::vector<KeyPoint>::const_iterator seed_iter = keypoints_seed.begin();
     int count = 0;

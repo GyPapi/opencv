@@ -2,7 +2,7 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 //
-// Copyright (C) 2018 Intel Corporation
+// Copyright (C) 2018-2019 Intel Corporation
 
 
 #ifndef OPENCV_GAPI_GCPUKERNEL_HPP
@@ -19,6 +19,7 @@
 #include <opencv2/gapi/garg.hpp>
 #include <opencv2/gapi/own/convert.hpp> //to_ocv
 #include <opencv2/gapi/util/compiler_hints.hpp> //suppress_unused_warning
+#include <opencv2/gapi/util/util.hpp>
 
 // FIXME: namespace scheme for backends?
 namespace cv {
@@ -27,6 +28,14 @@ namespace gimpl
 {
     // Forward-declare an internal class
     class GCPUExecutable;
+
+    namespace render
+    {
+    namespace ocv
+    {
+        class GRenderExecutable;
+    }
+    }
 } // namespace gimpl
 
 namespace gapi
@@ -63,6 +72,17 @@ namespace cpu
      */
     GAPI_EXPORTS cv::gapi::GBackend backend();
     /** @} */
+
+    class GOCVFunctor;
+
+    //! @cond IGNORED
+    template<typename K, typename Callable>
+    GOCVFunctor ocv_kernel(const Callable& c);
+
+    template<typename K, typename Callable>
+    GOCVFunctor ocv_kernel(Callable& c);
+    //! @endcond
+
 } // namespace cpu
 } // namespace gapi
 
@@ -85,18 +105,24 @@ public:
     {
         return outVecRef(output).wref<T>();
     }
+    template<typename T> T& outOpaqueR(int output) // FIXME: the same issue
+    {
+        return outOpaqueRef(output).wref<T>();
+    }
 
 protected:
     detail::VectorRef& outVecRef(int output);
+    detail::OpaqueRef& outOpaqueRef(int output);
 
     std::vector<GArg> m_args;
 
-    //FIXME: avoid conversion of arguments from internal representaion to OpenCV one on each call
+    //FIXME: avoid conversion of arguments from internal representation to OpenCV one on each call
     //to OCV kernel. (This can be achieved by a two single time conversions in GCPUExecutable::run,
     //once on enter for input and output arguments, and once before return for output arguments only
     std::unordered_map<std::size_t, GRunArgP> m_results;
 
     friend class gimpl::GCPUExecutable;
+    friend class gimpl::render::ocv::GRenderExecutable;
 };
 
 class GAPI_EXPORTS GCPUKernel
@@ -114,7 +140,7 @@ protected:
     F m_f;
 };
 
-// FIXME: This is an ugly ad-hoc imlpementation. TODO: refactor
+// FIXME: This is an ugly ad-hoc implementation. TODO: refactor
 
 namespace detail
 {
@@ -135,6 +161,31 @@ template<typename U> struct get_in<cv::GArray<U> >
 {
     static const std::vector<U>& get(GCPUContext &ctx, int idx) { return ctx.inArg<VectorRef>(idx).rref<U>(); }
 };
+template<typename U> struct get_in<cv::GOpaque<U> >
+{
+    static const U& get(GCPUContext &ctx, int idx) { return ctx.inArg<OpaqueRef>(idx).rref<U>(); }
+};
+
+//FIXME(dm): GArray<Mat>/GArray<GMat> conversion should be done more gracefully in the system
+template<> struct get_in<cv::GArray<cv::GMat> >: public get_in<cv::GArray<cv::Mat> >
+{
+};
+
+//FIXME(dm): GArray<Scalar>/GArray<GScalar> conversion should be done more gracefully in the system
+template<> struct get_in<cv::GArray<cv::GScalar> >: public get_in<cv::GArray<cv::Scalar> >
+{
+};
+
+//FIXME(dm): GOpaque<Mat>/GOpaque<GMat> conversion should be done more gracefully in the system
+template<> struct get_in<cv::GOpaque<cv::GMat> >: public get_in<cv::GOpaque<cv::Mat> >
+{
+};
+
+//FIXME(dm): GOpaque<Scalar>/GOpaque<GScalar> conversion should be done more gracefully in the system
+template<> struct get_in<cv::GOpaque<cv::GScalar> >: public get_in<cv::GOpaque<cv::Mat> >
+{
+};
+
 template<class T> struct get_in
 {
     static T get(GCPUContext &ctx, int idx) { return ctx.inArg<T>(idx); }
@@ -213,6 +264,13 @@ template<typename U> struct get_out<cv::GArray<U>>
         return ctx.outVecR<U>(idx);
     }
 };
+template<typename U> struct get_out<cv::GOpaque<U>>
+{
+    static U& get(GCPUContext &ctx, int idx)
+    {
+        return ctx.outOpaqueR<U>(idx);
+    }
+};
 
 template<typename, typename, typename>
 struct OCVCallHelper;
@@ -228,10 +286,15 @@ struct OCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Outs...> >
         static void call(Inputs&&... ins, Outputs&&... outs)
         {
             //not using a std::forward on outs is deliberate in order to
-            //cause compilation error, by tring to bind rvalue references to lvalue references
+            //cause compilation error, by trying to bind rvalue references to lvalue references
             Impl::run(std::forward<Inputs>(ins)..., outs...);
-
             postprocess(outs...);
+        }
+
+        template<typename... Outputs>
+        static void call(Impl& impl, Inputs&&... ins, Outputs&&... outs)
+        {
+            impl(std::forward<Inputs>(ins)..., outs...);
         }
     };
 
@@ -244,7 +307,17 @@ struct OCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Outs...> >
         //them to parameters of ad-hoc function
         //Convert own::Scalar to cv::Scalar before call kernel and run kernel
         //convert cv::Scalar to own::Scalar after call kernel and write back results
-        call_and_postprocess<decltype(get_in<Ins>::get(ctx, IIs))...>::call(get_in<Ins>::get(ctx, IIs)..., get_out<Outs>::get(ctx, OIs)...);
+        call_and_postprocess<decltype(get_in<Ins>::get(ctx, IIs))...>
+                                      ::call(get_in<Ins>::get(ctx, IIs)...,
+                                             get_out<Outs>::get(ctx, OIs)...);
+    }
+
+    template<int... IIs, int... OIs>
+    static void call_impl(cv::GCPUContext &ctx, Impl& impl, detail::Seq<IIs...>, detail::Seq<OIs...>)
+    {
+        call_and_postprocess<decltype(cv::detail::get_in<Ins>::get(ctx, IIs))...>
+                                      ::call(impl, cv::detail::get_in<Ins>::get(ctx, IIs)...,
+                                                   cv::detail::get_out<Outs>::get(ctx, OIs)...);
     }
 
     static void call(GCPUContext &ctx)
@@ -253,12 +326,23 @@ struct OCVCallHelper<Impl, std::tuple<Ins...>, std::tuple<Outs...> >
                   typename detail::MkSeq<sizeof...(Ins)>::type(),
                   typename detail::MkSeq<sizeof...(Outs)>::type());
     }
+
+    // NB: Same as call but calling the object
+    // This necessary for kernel implementations that have a state
+    // and are represented as an object
+    static void callFunctor(cv::GCPUContext &ctx, Impl& impl)
+    {
+        call_impl(ctx, impl,
+                  typename detail::MkSeq<sizeof...(Ins)>::type(),
+                  typename detail::MkSeq<sizeof...(Outs)>::type());
+    }
 };
 
 } // namespace detail
 
 template<class Impl, class K>
-class GCPUKernelImpl: public detail::OCVCallHelper<Impl, typename K::InArgs, typename K::OutArgs>
+class GCPUKernelImpl: public cv::detail::OCVCallHelper<Impl, typename K::InArgs, typename K::OutArgs>,
+                      public cv::detail::KernelTag
 {
     using P = detail::OCVCallHelper<Impl, typename K::InArgs, typename K::OutArgs>;
 
@@ -270,6 +354,39 @@ public:
 };
 
 #define GAPI_OCV_KERNEL(Name, API) struct Name: public cv::GCPUKernelImpl<Name, API>
+
+class gapi::cpu::GOCVFunctor : public gapi::GFunctor
+{
+public:
+    using Impl = std::function<void(GCPUContext &)>;
+
+    GOCVFunctor(const char* id, const Impl& impl)
+        : gapi::GFunctor(id), impl_{GCPUKernel(impl)}
+    {
+    }
+
+    GKernelImpl    impl()    const override { return impl_;                }
+    gapi::GBackend backend() const override { return gapi::cpu::backend(); }
+
+private:
+    GKernelImpl impl_;
+};
+
+//! @cond IGNORED
+template<typename K, typename Callable>
+gapi::cpu::GOCVFunctor gapi::cpu::ocv_kernel(Callable& c)
+{
+    using P = detail::OCVCallHelper<Callable, typename K::InArgs, typename K::OutArgs>;
+    return GOCVFunctor(K::id(), std::bind(&P::callFunctor, std::placeholders::_1, std::ref(c)));
+}
+
+template<typename K, typename Callable>
+gapi::cpu::GOCVFunctor gapi::cpu::ocv_kernel(const Callable& c)
+{
+    using P = detail::OCVCallHelper<Callable, typename K::InArgs, typename K::OutArgs>;
+    return GOCVFunctor(K::id(), std::bind(&P::callFunctor, std::placeholders::_1, c));
+}
+//! @endcond
 
 } // namespace cv
 

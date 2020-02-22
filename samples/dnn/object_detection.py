@@ -4,7 +4,7 @@ import numpy as np
 import sys
 import time
 from threading import Thread
-if sys.version_info[0] == '2':
+if sys.version_info[0] == 2:
     import Queue as queue
 else:
     import queue
@@ -43,6 +43,7 @@ parser.add_argument('--target', choices=targets, default=cv.dnn.DNN_TARGET_CPU, 
                          '%d: OpenCL fp16 (half-float precision), '
                          '%d: VPU' % targets)
 parser.add_argument('--async', type=int, default=0,
+                    dest='asyncN',
                     help='Number of asynchronous forwards at the same time. '
                          'Choose 0 for synchronous mode')
 args, _ = parser.parse_known_args()
@@ -126,7 +127,7 @@ def postprocess(frame, outs):
                     bottom = int(detection[6])
                     width = right - left + 1
                     height = bottom - top + 1
-                    if width * height <= 1:
+                    if width <= 2 or height <= 2:
                         left = int(detection[3] * frameWidth)
                         top = int(detection[4] * frameHeight)
                         right = int(detection[5] * frameWidth)
@@ -231,8 +232,8 @@ def processingThreadBody():
         try:
             frame = framesQueue.get_nowait()
 
-            if args.async:
-                if len(futureOutputs) == args.async:
+            if args.asyncN:
+                if len(futureOutputs) == args.asyncN:
                     frame = None  # Skip the frame
             else:
                 framesQueue.queue.clear()  # Skip the rest of frames
@@ -256,13 +257,13 @@ def processingThreadBody():
                 frame = cv.resize(frame, (inpWidth, inpHeight))
                 net.setInput(np.array([[inpHeight, inpWidth, 1.6]], dtype=np.float32), 'im_info')
 
-            if args.async:
+            if args.asyncN:
                 futureOutputs.append(net.forwardAsync())
             else:
                 outs = net.forward(outNames)
                 predictionsQueue.put(np.copy(outs))
 
-        while futureOutputs and futureOutputs[0].wait_for(0) == 0:
+        while futureOutputs and futureOutputs[0].wait_for(0):
             out = futureOutputs[0].get()
             predictionsQueue.put(np.copy([out]))
 

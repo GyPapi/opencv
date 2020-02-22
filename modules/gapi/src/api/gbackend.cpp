@@ -7,9 +7,10 @@
 
 #include "precomp.hpp"
 #include <memory> // unique_ptr
+#include <functional> // multiplies
 
-#include "opencv2/gapi/gkernel.hpp"
-#include "opencv2/gapi/own/convert.hpp"
+#include <opencv2/gapi/gkernel.hpp>
+#include <opencv2/gapi/own/convert.hpp>
 
 #include "api/gbackend_priv.hpp"
 #include "backends/common/gbackend.hpp"
@@ -39,10 +40,27 @@ cv::gapi::GBackend::Priv::compile(const ade::Graph&,
     return {};
 }
 
+std::unique_ptr<cv::gimpl::GIslandExecutable>
+cv::gapi::GBackend::Priv::compile(const ade::Graph& graph,
+                                  const GCompileArgs& args,
+                                  const std::vector<ade::NodeHandle>& nodes,
+                                  const std::vector<cv::gimpl::Data>&,
+                                  const std::vector<cv::gimpl::Data>&) const
+{
+    return compile(graph, args, nodes);
+}
+
 void cv::gapi::GBackend::Priv::addBackendPasses(ade::ExecutionEngineSetupContext &)
 {
     // Do nothing by default, plugins may override this to
     // add custom (backend-specific) graph transformations
+}
+
+void cv::gapi::GBackend::Priv::addMetaSensitiveBackendPasses(ade::ExecutionEngineSetupContext &)
+{
+    // Do nothing by default, plugins may override this to
+    // add custom (backend-specific) graph transformations
+    // which are sensitive to metadata
 }
 
 cv::gapi::GKernelPackage cv::gapi::GBackend::Priv::auxiliaryKernels() const
@@ -103,7 +121,7 @@ void bindInArg(Mag& mag, const RcDesc &rc, const GRunArg &arg, bool is_umat)
                 auto& mag_umat = mag.template slot<cv::UMat>()[rc.id];
                 mag_umat = to_ocv(util::get<cv::gapi::own::Mat>(arg)).getUMat(ACCESS_READ);
 #else
-                util::throw_error(std::logic_error("UMat is not supported in stadnalone build"));
+                util::throw_error(std::logic_error("UMat is not supported in standalone build"));
 #endif // !defined(GAPI_STANDALONE)
             }
             else
@@ -117,7 +135,7 @@ void bindInArg(Mag& mag, const RcDesc &rc, const GRunArg &arg, bool is_umat)
             if (is_umat)
             {
                 auto& mag_umat = mag.template slot<cv::UMat>()[rc.id];
-                mag_umat = (util::get<cv::UMat>(arg));
+                mag_umat = util::get<cv::Mat>(arg).getUMat(ACCESS_READ);
             }
             else
             {
@@ -148,6 +166,10 @@ void bindInArg(Mag& mag, const RcDesc &rc, const GRunArg &arg, bool is_umat)
 
     case GShape::GARRAY:
         mag.template slot<cv::detail::VectorRef>()[rc.id] = util::get<cv::detail::VectorRef>(arg);
+        break;
+
+    case GShape::GOPAQUE:
+        mag.template slot<cv::detail::OpaqueRef>()[rc.id] = util::get<cv::detail::OpaqueRef>(arg);
         break;
 
     default:
@@ -184,7 +206,7 @@ void bindOutArg(Mag& mag, const RcDesc &rc, const GRunArgP &arg, bool is_umat)
             if (is_umat)
             {
                 auto& mag_umat = mag.template slot<cv::UMat>()[rc.id];
-                mag_umat = (*util::get<cv::UMat*>(arg));
+                mag_umat = util::get<cv::Mat*>(arg)->getUMat(ACCESS_RW);
             }
             else
             {
@@ -215,6 +237,10 @@ void bindOutArg(Mag& mag, const RcDesc &rc, const GRunArgP &arg, bool is_umat)
         mag.template slot<cv::detail::VectorRef>()[rc.id] = util::get<cv::detail::VectorRef>(arg);
         break;
 
+    case GShape::GOPAQUE:
+        mag.template slot<cv::detail::OpaqueRef>()[rc.id] = util::get<cv::detail::OpaqueRef>(arg);
+        break;
+
     default:
         util::throw_error(std::logic_error("Unsupported GShape type"));
         break;
@@ -233,12 +259,17 @@ void resetInternalData(Mag& mag, const Data &d)
             (mag.template slot<cv::detail::VectorRef>()[d.rc]);
         break;
 
+    case GShape::GOPAQUE:
+        util::get<cv::detail::ConstructOpaque>(d.ctor)
+            (mag.template slot<cv::detail::OpaqueRef>()[d.rc]);
+        break;
+
     case GShape::GSCALAR:
         mag.template slot<cv::gapi::own::Scalar>()[d.rc] = cv::gapi::own::Scalar();
         break;
 
     case GShape::GMAT:
-        // Do nothign here - FIXME unify with initInternalData?
+        // Do nothing here - FIXME unify with initInternalData?
         break;
 
     default:
@@ -254,9 +285,10 @@ cv::GRunArg getArg(const Mag& mag, const RcDesc &ref)
     {
     case GShape::GMAT:    return GRunArg(mag.template slot<cv::gapi::own::Mat>().at(ref.id));
     case GShape::GSCALAR: return GRunArg(mag.template slot<cv::gapi::own::Scalar>().at(ref.id));
-    // Note: .at() is intentional for GArray as object MUST be already there
+    // Note: .at() is intentional for GArray and GOpaque as objects MUST be already there
     //   (and constructed by either bindIn/Out or resetInternal)
     case GShape::GARRAY:  return GRunArg(mag.template slot<cv::detail::VectorRef>().at(ref.id));
+    case GShape::GOPAQUE: return GRunArg(mag.template slot<cv::detail::OpaqueRef>().at(ref.id));
     default:
         util::throw_error(std::logic_error("Unsupported GShape type"));
         break;
@@ -279,8 +311,8 @@ cv::GRunArgP getObjPtr(Mag& mag, const RcDesc &rc, bool is_umat)
         else
             return GRunArgP(&mag.template slot<cv::gapi::own::Mat>()[rc.id]);
     case GShape::GSCALAR: return GRunArgP(&mag.template slot<cv::gapi::own::Scalar>()[rc.id]);
-    // Note: .at() is intentional for GArray as object MUST be already there
-    //   (and constructer by either bindIn/Out or resetInternal)
+    // Note: .at() is intentional for GArray and GOpaque as objects MUST be already there
+    //   (and constructor by either bindIn/Out or resetInternal)
     case GShape::GARRAY:
         // FIXME(DM): For some absolutely unknown to me reason, move
         // semantics is involved here without const_cast to const (and
@@ -289,6 +321,14 @@ cv::GRunArgP getObjPtr(Mag& mag, const RcDesc &rc, bool is_umat)
         // debugging this!!!1
         return GRunArgP(const_cast<const Mag&>(mag)
                         .template slot<cv::detail::VectorRef>().at(rc.id));
+    case GShape::GOPAQUE:
+        // FIXME(DM): For some absolutely unknown to me reason, move
+        // semantics is involved here without const_cast to const (and
+        // value from map is moved into return value GRunArgP, leaving
+        // map with broken value I've spent few late Friday hours
+        // debugging this!!!1
+        return GRunArgP(const_cast<const Mag&>(mag)
+                        .template slot<cv::detail::OpaqueRef>().at(rc.id));
     default:
         util::throw_error(std::logic_error("Unsupported GShape type"));
         break;
@@ -300,6 +340,9 @@ void writeBack(const Mag& mag, const RcDesc &rc, GRunArgP &g_arg, bool is_umat)
     switch (rc.shape)
     {
     case GShape::GARRAY:
+        // Do nothing - should we really do anything here?
+        break;
+        case GShape::GOPAQUE:
         // Do nothing - should we really do anything here?
         break;
 
@@ -355,21 +398,39 @@ void writeBack(const Mag& mag, const RcDesc &rc, GRunArgP &g_arg, bool is_umat)
 
 } // namespace magazine
 
-void createMat(const cv::GMatDesc desc, cv::gapi::own::Mat& mat)
+void createMat(const cv::GMatDesc &desc, cv::gapi::own::Mat& mat)
 {
-    const auto type = desc.planar ? desc.depth : CV_MAKETYPE(desc.depth, desc.chan);
-    const auto size = desc.planar ? cv::gapi::own::Size{desc.size.width, desc.size.height*desc.chan}
-                                  : desc.size;
-    mat.create(size, type);
+    // FIXME: Refactor (probably start supporting N-Dimensional blobs natively
+    if (desc.dims.empty())
+    {
+        const auto type = desc.planar ? desc.depth : CV_MAKETYPE(desc.depth, desc.chan);
+        const auto size = desc.planar ? cv::gapi::own::Size{desc.size.width, desc.size.height*desc.chan}
+                                      : desc.size;
+        mat.create(size, type);
+    }
+    else
+    {
+        GAPI_Assert(!desc.planar);
+        mat.create(desc.dims, desc.depth);
+    }
 }
 
 #if !defined(GAPI_STANDALONE)
-void createMat(const cv::GMatDesc desc, cv::Mat& mat)
+void createMat(const cv::GMatDesc &desc, cv::Mat& mat)
 {
-    const auto type = desc.planar ? desc.depth : CV_MAKETYPE(desc.depth, desc.chan);
-    const auto size = desc.planar ? cv::Size{desc.size.width, desc.size.height*desc.chan}
-                                  : cv::gapi::own::to_ocv(desc.size);
-    mat.create(size, type);
+    // FIXME: Refactor (probably start supporting N-Dimensional blobs natively
+    if (desc.dims.empty())
+    {
+        const auto type = desc.planar ? desc.depth : CV_MAKETYPE(desc.depth, desc.chan);
+        const auto size = desc.planar ? cv::Size{desc.size.width, desc.size.height*desc.chan}
+                                      : cv::gapi::own::to_ocv(desc.size);
+        mat.create(size, type);
+    }
+    else
+    {
+        GAPI_Assert(!desc.planar);
+        mat.create(desc.dims, desc.depth);
+    }
 }
 #endif
 

@@ -14,6 +14,8 @@
 #include <opencv2/gapi/gmat.hpp>
 #include <opencv2/gapi/gscalar.hpp>
 #include <opencv2/gapi/garray.hpp>
+#include <opencv2/gapi/gopaque.hpp>
+#include <opencv2/gapi/streaming/source.hpp>
 #include <opencv2/gapi/gcommon.hpp>
 #include <opencv2/gapi/own/convert.hpp>
 
@@ -26,12 +28,17 @@ namespace detail
     // a double dispatch
     enum class ArgKind: int
     {
-        OPAQUE,       // Unknown, generic, opaque-to-GAPI data type - STATIC
+        OPAQUE_VAL,   // Unknown, generic, opaque-to-GAPI data type - STATIC
+                      // Note: OPAQUE is sometimes defined in Win sys headers
+#if !defined(OPAQUE) && !defined(CV_DOXYGEN)
+        OPAQUE = OPAQUE_VAL,  // deprecated value used for compatibility, use OPAQUE_VAL instead
+#endif
         GOBJREF,      // <internal> reference to object
         GMAT,         // a cv::GMat
         GMATP,        // a cv::GMatP
         GSCALAR,      // a cv::GScalar
-        GARRAY,       // a cv::GArrayU (note - exactly GArrayU, not GArray<T>!)
+        GARRAY,       // a cv::GArrayU  (note - exactly GArrayU,  not GArray<T>!)
+        GOPAQUE,      // a cv::GOpaqueU (note - exactly GOpaqueU, not GOpaque<T>!)
     };
 
     // Describe G-API types (G-types) with traits.  Mostly used by
@@ -41,7 +48,7 @@ namespace detail
     template<typename T> struct GTypeTraits;
     template<typename T> struct GTypeTraits
     {
-        static constexpr const ArgKind kind = ArgKind::OPAQUE;
+        static constexpr const ArgKind kind = ArgKind::OPAQUE_VAL;
     };
     template<>           struct GTypeTraits<cv::GMat>
     {
@@ -67,6 +74,16 @@ namespace detail
         static cv::detail::GArrayU   wrap_value(const cv::GArray<T>  &t) { return t.strip();}
         static cv::detail::VectorRef wrap_in   (const std::vector<T> &t) { return detail::VectorRef(t); }
         static cv::detail::VectorRef wrap_out  (      std::vector<T> &t) { return detail::VectorRef(t); }
+    };
+    template<class T> struct GTypeTraits<cv::GOpaque<T> >
+    {
+        static constexpr const ArgKind kind = ArgKind::GOPAQUE;
+        static constexpr const GShape shape = GShape::GOPAQUE;
+        using host_type  = T;
+        using strip_type = cv::detail::OpaqueRef;
+        static cv::detail::GOpaqueU  wrap_value(const cv::GOpaque<T>  &t) { return t.strip();}
+        static cv::detail::OpaqueRef wrap_in   (const T &t) { return detail::OpaqueRef(t); }
+        static cv::detail::OpaqueRef wrap_out  (      T &t) { return detail::OpaqueRef(t); }
     };
 
     // Tests if Trait for type T requires extra marshalling ("custom wrap") or not.
@@ -95,6 +112,10 @@ namespace detail
     template<>           struct GTypeOf<cv::gapi::own::Mat>    { using type = cv::GMat;      };
     template<>           struct GTypeOf<cv::gapi::own::Scalar> { using type = cv::GScalar;   };
     template<typename U> struct GTypeOf<std::vector<U> >       { using type = cv::GArray<U>; };
+    template<typename U> struct GTypeOf                        { using type = cv::GOpaque<U>;};
+    // FIXME: This is not quite correct since IStreamSource may produce not only Mat but also Scalar
+    // and vector data. TODO: Extend the type dispatching on these types too.
+    template<>           struct GTypeOf<cv::gapi::wip::IStreamSource::Ptr> { using type = cv::GMat;};
     template<class T> using g_type_of_t = typename GTypeOf<T>::type;
 
     // Marshalling helper for G-types and its Host types. Helps G-API
@@ -156,7 +177,6 @@ namespace detail
 
     template<typename T> using wrap_gapi_helper = WrapValue<typename std::decay<T>::type>;
     template<typename T> using wrap_host_helper = WrapValue<typename std::decay<g_type_of_t<T> >::type>;
-
 } // namespace detail
 } // namespace cv
 

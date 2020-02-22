@@ -537,6 +537,7 @@ bool  TiffDecoder::readData( Mat& img )
                                     }
                                     else
                                     {
+                                        CV_CheckEQ(wanted_channels, 3, "TIFF-8bpp: BGR/BGRA images are supported only");
                                         icvCvt_BGRA2BGR_8u_C4C3R(bstart + i*tile_width0*4, 0,
                                                 img.ptr(img_y + tile_height - i - 1, x), 0,
                                                 Size(tile_width, 1), 2);
@@ -544,6 +545,7 @@ bool  TiffDecoder::readData( Mat& img )
                                 }
                                 else
                                 {
+                                    CV_CheckEQ(wanted_channels, 1, "");
                                     icvCvt_BGRA2Gray_8u_C4C1R( bstart + i*tile_width0*4, 0,
                                             img.ptr(img_y + tile_height - i - 1, x), 0,
                                             Size(tile_width, 1), 2);
@@ -569,12 +571,14 @@ bool  TiffDecoder::readData( Mat& img )
                                 {
                                     if (ncn == 1)
                                     {
+                                        CV_CheckEQ(wanted_channels, 3, "");
                                         icvCvt_Gray2BGR_16u_C1C3R(buffer16 + i*tile_width0*ncn, 0,
                                                 img.ptr<ushort>(img_y + i, x), 0,
                                                 Size(tile_width, 1));
                                     }
                                     else if (ncn == 3)
                                     {
+                                        CV_CheckEQ(wanted_channels, 3, "");
                                         icvCvt_RGB2BGR_16u_C3R(buffer16 + i*tile_width0*ncn, 0,
                                                 img.ptr<ushort>(img_y + i, x), 0,
                                                 Size(tile_width, 1));
@@ -589,6 +593,7 @@ bool  TiffDecoder::readData( Mat& img )
                                         }
                                         else
                                         {
+                                            CV_CheckEQ(wanted_channels, 3, "TIFF-16bpp: BGR/BGRA images are supported only");
                                             icvCvt_BGRA2BGR_16u_C4C3R(buffer16 + i*tile_width0*ncn, 0,
                                                 img.ptr<ushort>(img_y + i, x), 0,
                                                 Size(tile_width, 1), 2);
@@ -596,13 +601,12 @@ bool  TiffDecoder::readData( Mat& img )
                                     }
                                     else
                                     {
-                                        icvCvt_BGRA2BGR_16u_C4C3R(buffer16 + i*tile_width0*ncn, 0,
-                                                img.ptr<ushort>(img_y + i, x), 0,
-                                                Size(tile_width, 1), 2);
+                                        CV_Error(Error::StsError, "Not supported");
                                     }
                                 }
                                 else
                                 {
+                                    CV_CheckEQ(wanted_channels, 1, "");
                                     if( ncn == 1 )
                                     {
                                         memcpy(img.ptr<ushort>(img_y + i, x),
@@ -820,6 +824,7 @@ bool TiffEncoder::writeLibTiff( const std::vector<Mat>& img_vec, const std::vect
     for (size_t page = 0; page < img_vec.size(); page++)
     {
         const Mat& img = img_vec[page];
+        CV_Assert(!img.empty());
         int channels = img.channels();
         int width = img.cols, height = img.rows;
         int type = img.type();
@@ -879,6 +884,7 @@ bool TiffEncoder::writeLibTiff( const std::vector<Mat>& img_vec, const std::vect
 
         const int bitsPerByte = 8;
         size_t fileStep = (width * channels * bitsPerChannel) / bitsPerByte;
+        CV_Assert(fileStep > 0);
 
         int rowsPerStrip = (int)((1 << 13) / fileStep);
         readParam(params, TIFFTAG_ROWSPERSTRIP, rowsPerStrip);

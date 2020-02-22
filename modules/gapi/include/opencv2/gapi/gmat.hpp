@@ -14,9 +14,9 @@
 #include <opencv2/gapi/opencv_includes.hpp>
 #include <opencv2/gapi/gcommon.hpp> // GShape
 
-#include "opencv2/gapi/own/types.hpp" // cv::gapi::own::Size
-#include "opencv2/gapi/own/convert.hpp" // to_own
-#include "opencv2/gapi/own/assert.hpp"
+#include <opencv2/gapi/own/types.hpp> // cv::gapi::own::Size
+#include <opencv2/gapi/own/convert.hpp> // to_own
+#include <opencv2/gapi/own/assert.hpp>
 
 // TODO GAPI_EXPORTS or so
 namespace cv
@@ -29,10 +29,25 @@ struct GOrigin;
 /** \addtogroup gapi_data_objects
  * @{
  *
- * @brief Data-representing objects which can be used to build G-API
- * expressions.
+ * @brief G-API data objects used to build G-API expressions.
+ *
+ * These objects do not own any particular data (except compile-time
+ * associated values like with cv::GScalar) and are used to construct
+ * graphs.
+ *
+ * Every graph in G-API starts and ends with data objects.
+ *
+ * Once constructed and compiled, G-API operates with regular host-side
+ * data instead. Refer to the below table to find the mapping between
+ * G-API and regular data types.
+ *
+ *    G-API data type    | I/O data type
+ *    ------------------ | -------------
+ *    cv::GMat           | cv::Mat
+ *    cv::GScalar        | cv::Scalar
+ *    `cv::GArray<T>`    | std::vector<T>
+ *    `cv::GOpaque<T>`   | T
  */
-
 class GAPI_EXPORTS GMat
 {
 public:
@@ -69,21 +84,34 @@ struct GAPI_EXPORTS GMatDesc
     int chan;
     cv::gapi::own::Size size; // NB.: no multi-dimensional cases covered yet
     bool planar;
+    std::vector<int> dims; // FIXME: Maybe it's real questionable to have it here
 
     GMatDesc(int d, int c, cv::gapi::own::Size s, bool p = false)
         : depth(d), chan(c), size(s), planar(p) {}
+
+    GMatDesc(int d, const std::vector<int> &dd)
+        : depth(d), chan(-1), size{-1,-1}, planar(false), dims(dd) {}
+
+    GMatDesc(int d, std::vector<int> &&dd)
+        : depth(d), chan(-1), size{-1,-1}, planar(false), dims(std::move(dd)) {}
 
     GMatDesc() : GMatDesc(-1, -1, {-1,-1}) {}
 
     inline bool operator== (const GMatDesc &rhs) const
     {
-        return depth == rhs.depth && chan == rhs.chan && size == rhs.size && planar == rhs.planar;
+        return    depth  == rhs.depth
+               && chan   == rhs.chan
+               && size   == rhs.size
+               && planar == rhs.planar
+               && dims   == rhs.dims;
     }
 
     inline bool operator!= (const GMatDesc &rhs) const
     {
         return !(*this == rhs);
     }
+
+    bool isND() const { return !dims.empty(); }
 
     // Checks if the passed mat can be described by this descriptor
     // (it handles the case when
@@ -198,6 +226,7 @@ GAPI_EXPORTS GMatDesc descr_of(const cv::UMat &mat);
 
 /** @} */
 
+// FIXME: WHY??? WHY it is under different namespace?
 namespace gapi { namespace own {
     GAPI_EXPORTS GMatDesc descr_of(const Mat &mat);
 }}//gapi::own

@@ -43,12 +43,18 @@
 #include "../precomp.hpp"
 #include "layers_common.hpp"
 #include "../op_inf_engine.hpp"
+
 #include <float.h>
 #include <string>
 #include "../nms.inl.hpp"
 
 #ifdef HAVE_OPENCL
 #include "opencl_kernels_dnn.hpp"
+#endif
+
+#ifdef HAVE_DNN_NGRAPH
+#include "../ie_ngraph.hpp"
+#include <ngraph/op/experimental/layers/detection_output.hpp>
 #endif
 
 namespace cv
@@ -198,7 +204,7 @@ public:
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
         return backendId == DNN_BACKEND_OPENCV ||
-               (backendId == DNN_BACKEND_INFERENCE_ENGINE && !_locPredTransposed && _bboxesNormalized && !_clip);
+               ((backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 || backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) && !_locPredTransposed && _bboxesNormalized);
     }
 
     bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -918,17 +924,16 @@ public:
         }
     }
 
+#ifdef HAVE_INF_ENGINE
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
-#ifdef HAVE_INF_ENGINE
-#if INF_ENGINE_VER_MAJOR_GE(INF_ENGINE_RELEASE_2018R5)
         InferenceEngine::Builder::DetectionOutputLayer ieLayer(name);
 
         ieLayer.setNumClasses(_numClasses);
         ieLayer.setShareLocation(_shareLocation);
         ieLayer.setBackgroudLabelId(_backgroundLabelId);
         ieLayer.setNMSThreshold(_nmsThreshold);
-        ieLayer.setTopK(_topK);
+        ieLayer.setTopK(_topK > 0 ? _topK : _keepTopK);
         ieLayer.setKeepTopK(_keepTopK);
         ieLayer.setConfidenceThreshold(_confidenceThreshold);
         ieLayer.setVariantEncodedInTarget(_varianceEncodedInTarget);
@@ -937,30 +942,39 @@ public:
 
         InferenceEngine::Builder::Layer l = ieLayer;
         l.getParameters()["eta"] = std::string("1.0");
+        l.getParameters()["clip"] = _clip;
 
         return Ptr<BackendNode>(new InfEngineBackendNode(l));
-#else
-        InferenceEngine::LayerParams lp;
-        lp.name = name;
-        lp.type = "DetectionOutput";
-        lp.precision = InferenceEngine::Precision::FP32;
-        std::shared_ptr<InferenceEngine::CNNLayer> ieLayer(new InferenceEngine::CNNLayer(lp));
-
-        ieLayer->params["num_classes"] = format("%d", _numClasses);
-        ieLayer->params["share_location"] = _shareLocation ? "1" : "0";
-        ieLayer->params["background_label_id"] = format("%d", _backgroundLabelId);
-        ieLayer->params["nms_threshold"] = format("%f", _nmsThreshold);
-        ieLayer->params["top_k"] = format("%d", _topK);
-        ieLayer->params["keep_top_k"] = format("%d", _keepTopK);
-        ieLayer->params["eta"] = "1.0";
-        ieLayer->params["confidence_threshold"] = format("%f", _confidenceThreshold);
-        ieLayer->params["variance_encoded_in_target"] = _varianceEncodedInTarget ? "1" : "0";
-        ieLayer->params["code_type"] = "caffe.PriorBoxParameter." + _codeType;
-        return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-#endif
-#endif  // HAVE_INF_ENGINE
-        return Ptr<BackendNode>();
     }
+#endif  // HAVE_INF_ENGINE
+
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        CV_Assert(nodes.size() == 3);
+        auto& box_logits  = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+        auto& class_preds = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
+        auto& proposals   = nodes[2].dynamicCast<InfEngineNgraphNode>()->node;
+
+        ngraph::op::DetectionOutputAttrs attrs;
+        attrs.num_classes                = _numClasses;
+        attrs.background_label_id        = _backgroundLabelId;
+        attrs.top_k                      = _topK > 0 ? _topK : _keepTopK;
+        attrs.variance_encoded_in_target = _varianceEncodedInTarget;
+        attrs.keep_top_k                 = {_keepTopK};
+        attrs.nms_threshold              = _nmsThreshold;
+        attrs.confidence_threshold       = _confidenceThreshold;
+        attrs.share_location             = _shareLocation;
+        attrs.clip_before_nms            = _clip;
+        attrs.code_type                  = std::string{"caffe.PriorBoxParameter." + _codeType};
+        attrs.normalized                 = true;
+
+        auto det_out = std::make_shared<ngraph::op::DetectionOutput>(box_logits, class_preds,
+                       proposals, attrs);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(det_out));
+    }
+#endif  // HAVE_DNN_NGRAPH
 };
 
 float util::caffe_box_overlap(const util::NormalizedBBox& a, const util::NormalizedBBox& b)

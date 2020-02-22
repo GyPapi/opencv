@@ -1004,7 +1004,7 @@ public:
     @param samples Samples from which the Gaussian mixture model will be estimated. It should be a
         one-channel matrix, each row of which is a sample. If the matrix does not have CV_64F type
         it will be converted to the inner matrix of such type for the further computing.
-    @param probs0
+    @param probs0 the probabilities
     @param logLikelihoods The optional output matrix that contains a likelihood logarithm value for
         each sample. It has \f$nsamples \times 1\f$ size and CV_64FC1 type.
     @param labels The optional output "class label" for each sample:
@@ -1683,7 +1683,7 @@ public:
 
     /** @brief This function returns the trained parameters arranged across rows.
 
-    For a two class classifcation problem, it returns a row matrix. It returns learnt parameters of
+    For a two class classification problem, it returns a row matrix. It returns learnt parameters of
     the Logistic Regression as a matrix of type CV_32F.
      */
     CV_WRAP virtual Mat get_learnt_thetas() const = 0;
@@ -1764,7 +1764,7 @@ Note that the parameters margin regularization, initial step size, and step decr
 
 To use SVMSGD algorithm do as follows:
 
-- first, create the SVMSGD object. The algoorithm will set optimal parameters by default, but you can set your own parameters via functions setSvmsgdType(),
+- first, create the SVMSGD object. The algorithm will set optimal parameters by default, but you can set your own parameters via functions setSvmsgdType(),
   setMarginType(), setMarginRegularization(), setInitialStepSize(), and setStepDecreasingPower().
 
 - then the SVM model can be trained using the train features and the correspondent labels by the method train().

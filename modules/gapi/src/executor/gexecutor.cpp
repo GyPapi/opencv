@@ -11,7 +11,7 @@
 
 #include <ade/util/zip_range.hpp>
 
-#include "opencv2/gapi/opencv_includes.hpp"
+#include <opencv2/gapi/opencv_includes.hpp>
 #include "executor/gexecutor.hpp"
 #include "compiler/passes/passes.hpp"
 
@@ -62,7 +62,8 @@ cv::gimpl::GExecutor::GExecutor(std::unique_ptr<ade::Graph> &&g_model)
 
                 m_ops.emplace_back(OpDesc{ std::move(input_rcs)
                                          , std::move(output_rcs)
-                                         , m_gim.metadata(nh).get<IslandExec>().object});
+                                         , m_gim.metadata(nh).get<IslandExec>().object
+                                         });
             }
             break;
 
@@ -88,7 +89,7 @@ void cv::gimpl::GExecutor::initResource(const ade::NodeHandle &orig_nh)
     const Data &d = m_gm.metadata(orig_nh).get<Data>();
 
     if (   d.storage != Data::Storage::INTERNAL
-        && d.storage != Data::Storage::CONST)
+        && d.storage != Data::Storage::CONST_VAL)
         return;
 
     // INTERNALS+CONST only! no need to allocate/reset output objects
@@ -105,7 +106,7 @@ void cv::gimpl::GExecutor::initResource(const ade::NodeHandle &orig_nh)
         break;
 
     case GShape::GSCALAR:
-        if (d.storage == Data::Storage::CONST)
+        if (d.storage == Data::Storage::CONST_VAL)
         {
             auto rc = RcDesc{d.rc, d.shape, d.ctor};
             magazine::bindInArg(m_res, rc, m_gm.metadata(orig_nh).get<ConstValue>().arg);

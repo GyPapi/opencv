@@ -9,7 +9,7 @@
 
 #include <cassert>
 
-#include "opencv2/gapi/cpu/gcpukernel.hpp"
+#include <opencv2/gapi/cpu/gcpukernel.hpp>
 
 const cv::gapi::own::Mat& cv::GCPUContext::inMat(int input)
 {
@@ -34,6 +34,11 @@ cv::gapi::own::Scalar& cv::GCPUContext::outValR(int output)
 cv::detail::VectorRef& cv::GCPUContext::outVecRef(int output)
 {
     return util::get<cv::detail::VectorRef>(m_results.at(output));
+}
+
+cv::detail::OpaqueRef& cv::GCPUContext::outOpaqueRef(int output)
+{
+    return util::get<cv::detail::OpaqueRef>(m_results.at(output));
 }
 
 cv::GCPUKernel::GCPUKernel()

@@ -6,6 +6,7 @@
 #include <opencv2/highgui.hpp>
 
 #ifdef CV_CXX11
+#include <mutex>
 #include <thread>
 #include <queue>
 #endif
@@ -126,7 +127,7 @@ int main(int argc, char** argv)
     bool swapRB = parser.get<bool>("rgb");
     int inpWidth = parser.get<int>("width");
     int inpHeight = parser.get<int>("height");
-    size_t async = parser.get<int>("async");
+    size_t asyncNumReq = parser.get<int>("async");
     CV_Assert(parser.has("model"));
     std::string modelPath = findFile(parser.get<String>("model"));
     std::string configPath = findFile(parser.get<String>("config"));
@@ -185,7 +186,7 @@ int main(int argc, char** argv)
     QueueFPS<Mat> processedFramesQueue;
     QueueFPS<std::vector<Mat> > predictionsQueue;
     std::thread processingThread([&](){
-        std::queue<std::future<Mat> > futureOutputs;
+        std::queue<AsyncArray> futureOutputs;
         Mat blob;
         while (process)
         {
@@ -195,9 +196,9 @@ int main(int argc, char** argv)
                 if (!framesQueue.empty())
                 {
                     frame = framesQueue.get();
-                    if (async)
+                    if (asyncNumReq)
                     {
-                        if (futureOutputs.size() == async)
+                        if (futureOutputs.size() == asyncNumReq)
                             frame = Mat();
                     }
                     else
@@ -211,7 +212,7 @@ int main(int argc, char** argv)
                 preprocess(frame, net, Size(inpWidth, inpHeight), scale, mean, swapRB);
                 processedFramesQueue.push(frame);
 
-                if (async)
+                if (asyncNumReq)
                 {
                     futureOutputs.push(net.forwardAsync());
                 }
@@ -224,11 +225,13 @@ int main(int argc, char** argv)
             }
 
             while (!futureOutputs.empty() &&
-                   futureOutputs.front().wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+                   futureOutputs.front().wait_for(std::chrono::seconds(0)))
             {
-                Mat out = futureOutputs.front().get();
-                predictionsQueue.push({out});
+                AsyncArray async_out = futureOutputs.front();
                 futureOutputs.pop();
+                Mat out;
+                async_out.get(out);
+                predictionsQueue.push({out});
             }
         }
     });
@@ -263,7 +266,7 @@ int main(int argc, char** argv)
     processingThread.join();
 
 #else  // CV_CXX11
-    if (async)
+    if (asyncNumReq)
         CV_Error(Error::StsNotImplemented, "Asynchronous forward is supported only with Inference Engine backend.");
 
     // Process frames.
@@ -344,7 +347,7 @@ void postprocess(Mat& frame, const std::vector<Mat>& outs, Net& net)
                     int bottom = (int)data[i + 6];
                     int width  = right - left + 1;
                     int height = bottom - top + 1;
-                    if (width * height <= 1)
+                    if (width <= 2 || height <= 2)
                     {
                         left   = (int)(data[i + 3] * frame.cols);
                         top    = (int)(data[i + 4] * frame.rows);

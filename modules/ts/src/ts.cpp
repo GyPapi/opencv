@@ -125,6 +125,20 @@ bool required_opencv_test_namespace = false;  // compilation check for non-refac
 namespace cvtest
 {
 
+details::SkipTestExceptionBase::SkipTestExceptionBase(bool handlingTags)
+{
+    if (!handlingTags)
+    {
+        testTagIncreaseSkipCount("skip_other", true, true);
+    }
+}
+details::SkipTestExceptionBase::SkipTestExceptionBase(const cv::String& message, bool handlingTags)
+{
+    if (!handlingTags)
+        testTagIncreaseSkipCount("skip_other", true, true);
+    this->msg = message;
+}
+
 uint64 param_seed = 0x12345678; // real value is passed via parseCustomOptions function
 
 static std::string path_join(const std::string& prefix, const std::string& subpath)
@@ -350,7 +364,13 @@ void BaseTest::run( int start_from )
             return;
 
         if( validate_test_results( test_case_idx ) < 0 || ts->get_err_code() < 0 )
+        {
+            std::stringstream ss;
+            dump_test_case(test_case_idx, &ss);
+            std::string s = ss.str();
+            ts->printf( TS::LOG, "%s", s.c_str());
             return;
+        }
     }
 }
 
@@ -401,6 +421,12 @@ int BaseTest::update_progress( int progress, int test_case_idx, int count, doubl
 }
 
 
+void BaseTest::dump_test_case(int test_case_idx, std::ostream* out)
+{
+    *out << "test_case_idx = " << test_case_idx << std::endl;
+}
+
+
 BadArgTest::BadArgTest()
 {
     test_case_idx   = -1;
@@ -426,7 +452,7 @@ int BadArgTest::run_test_case( int expected_code, const string& _descr )
     {
         thrown = true;
         if (e.code != expected_code &&
-            e.code != cv::Error::StsError && e.code != cv::Error::StsAssert  // Exact error codes support will be dropped. Checks should provide proper text messages intead.
+            e.code != cv::Error::StsError && e.code != cv::Error::StsAssert  // Exact error codes support will be dropped. Checks should provide proper text messages instead.
         )
         {
             ts->printf(TS::LOG, "%s (test case #%d): the error code %d is different from the expected %d\n",
@@ -512,8 +538,9 @@ string TS::str_from_code( const TS::FailureCode code )
     return "Generic/Unknown";
 }
 
-static int tsErrorCallback( int status, const char* func_name, const char* err_msg, const char* file_name, int line, TS* ts )
+static int tsErrorCallback( int status, const char* func_name, const char* err_msg, const char* file_name, int line, void* data )
 {
+    TS* ts = (TS*)data;
     const char* delim = std::string(err_msg).find('\n') == std::string::npos ? "" : "\n";
     ts->printf(TS::LOG, "OpenCV Error:\n\t%s (%s%s) in %s, file %s, line %d\n", cvErrorStr(status), delim, err_msg, func_name[0] != 0 ? func_name : "unknown function", file_name, line);
     return 0;
@@ -837,6 +864,17 @@ void testTearDown()
     }
 }
 
+bool checkBigDataTests()
+{
+    if (!runBigDataTests)
+    {
+        testTagIncreaseSkipCount("skip_bigdata", true, true);
+        printf("[     SKIP ] BigData tests are disabled\n");
+        return false;
+    }
+    return true;
+}
+
 void parseCustomOptions(int argc, char **argv)
 {
     const string command_line_keys = string(
@@ -911,24 +949,34 @@ void addDataSearchSubDirectory(const std::string& subdir)
 
 static std::string findData(const std::string& relative_path, bool required, bool findDirectory)
 {
-#define TEST_TRY_FILE_WITH_PREFIX(prefix) \
+#define CHECK_FILE_WITH_PREFIX(prefix, result) \
 { \
+    result.clear(); \
     std::string path = path_join(prefix, relative_path); \
     /*printf("Trying %s\n", path.c_str());*/ \
     if (findDirectory) \
     { \
         if (isDirectory(path)) \
-            return path; \
+            result = path; \
     } \
     else \
     { \
         FILE* f = fopen(path.c_str(), "rb"); \
         if(f) { \
             fclose(f); \
-            return path; \
+            result = path; \
         } \
     } \
 }
+
+#define TEST_TRY_FILE_WITH_PREFIX(prefix) \
+{ \
+    std::string result__; \
+    CHECK_FILE_WITH_PREFIX(prefix, result__); \
+    if (!result__.empty()) \
+        return result__; \
+}
+
 
     const std::vector<std::string>& search_path = TS::ptr()->data_search_path;
     for(size_t i = search_path.size(); i > 0; i--)
@@ -956,7 +1004,19 @@ static std::string findData(const std::string& relative_path, bool required, boo
             {
                 const std::string& subdir = search_subdir[i - 1];
                 std::string prefix = path_join(datapath, subdir);
-                TEST_TRY_FILE_WITH_PREFIX(prefix);
+                std::string result_;
+                CHECK_FILE_WITH_PREFIX(prefix, result_);
+                if (!required && !result_.empty())
+                {
+                    static bool checkOptionalFlag = cv::utils::getConfigurationParameterBool("OPENCV_TEST_CHECK_OPTIONAL_DATA", false);
+                    if (checkOptionalFlag)
+                    {
+                        std::cout << "TEST ERROR: Don't use 'optional' findData() for " << relative_path << std::endl;
+                        CV_Assert(required || result_.empty());
+                    }
+                }
+                if (!result_.empty())
+                    return result_;
             }
         }
     }

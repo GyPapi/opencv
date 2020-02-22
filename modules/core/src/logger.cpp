@@ -45,6 +45,8 @@ public:
     GlobalLoggingInitStruct()
         : logTagManager(m_defaultUnconfiguredGlobalLevel)
     {
+        (void)getInitializationMutex();  // ensure initialization of global objects
+
         applyConfigString();
         handleMalformed();
     }
@@ -75,7 +77,7 @@ private:
 };
 
 LogLevel GlobalLoggingInitStruct::m_defaultUnconfiguredGlobalLevel = GlobalLoggingInitStruct::m_isDebugBuild
-                ? LOG_LEVEL_DEBUG
+                ? LOG_LEVEL_INFO
                 : LOG_LEVEL_WARNING;
 
 

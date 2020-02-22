@@ -38,14 +38,14 @@ endif()
 if(UNIX AND NOT ANDROID AND (HAVE_VA OR HAVE_VA_INTEL))
   add_subdirectory(va_intel)
 endif()
-if(ANDROID AND BUILD_ANDROID_EXAMPLES)
+if(ANDROID AND (BUILD_ANDROID_EXAMPLES OR INSTALL_ANDROID_EXAMPLES))
   add_subdirectory(android)
 endif()
 if(INSTALL_PYTHON_EXAMPLES)
   add_subdirectory(python)
 endif()
 
-ocv_install_example_src("." CMakeLists.txt)
+ocv_install_example_src("." CMakeLists.txt samples_utils.cmake)
 if(INSTALL_C_EXAMPLES)
   install(DIRECTORY data DESTINATION "${OPENCV_SAMPLES_SRC_INSTALL_PATH}" COMPONENT samples_data)
 endif()
@@ -57,10 +57,6 @@ else()
 #
 #===================================================================================================
 cmake_minimum_required(VERSION 3.1)
-
-# Enable C++11
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 project(samples C CXX)
 option(BUILD_EXAMPLES "Build samples" ON)

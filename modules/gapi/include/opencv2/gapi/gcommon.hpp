@@ -14,9 +14,9 @@
 
 #include <opencv2/gapi/opencv_includes.hpp>
 
-#include "opencv2/gapi/util/any.hpp"
-#include "opencv2/gapi/own/exports.hpp"
-#include "opencv2/gapi/own/assert.hpp"
+#include <opencv2/gapi/util/any.hpp>
+#include <opencv2/gapi/own/exports.hpp>
+#include <opencv2/gapi/own/assert.hpp>
 
 namespace cv {
 
@@ -25,10 +25,12 @@ namespace detail
     // This is a trait-like structure to mark backend-specific compile arguments
     // with tags
     template<typename T> struct CompileArgTag;
-    template<typename T> struct CompileArgTag
-    {
-        static const char* tag() { return ""; };
-    };
+
+    // These structures are tags which separate kernels and transformations
+    struct KernelTag
+    {};
+    struct TransformTag
+    {};
 }
 
 // This definition is here because it is reused by both public(?) and internal
@@ -42,6 +44,7 @@ enum class GShape: int
     GMAT,
     GSCALAR,
     GARRAY,
+    GOPAQUE,
 };
 
 struct GCompileArg;
@@ -56,8 +59,8 @@ namespace detail {
 /** \addtogroup gapi_compile_args
  * @{
  *
- * @brief Compilation arguments: a set of data structures which can be
- * passed to control compilation process
+ * @brief Compilation arguments: data structures controlling the
+ * compilation process
  *
  * G-API comes with a number of graph compilation options which can be
  * passed to cv::GComputation::apply() or

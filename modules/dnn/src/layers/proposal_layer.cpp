@@ -8,6 +8,11 @@
 #include "layers_common.hpp"
 #include "../op_inf_engine.hpp"
 
+#ifdef HAVE_DNN_NGRAPH
+#include "../ie_ngraph.hpp"
+#include <ngraph/op/experimental/layers/proposal.hpp>
+#endif
+
 namespace cv { namespace dnn {
 
 class ProposalLayerImpl CV_FINAL : public ProposalLayer
@@ -87,7 +92,7 @@ public:
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
         return backendId == DNN_BACKEND_OPENCV ||
-               (backendId == DNN_BACKEND_INFERENCE_ENGINE && preferableTarget != DNN_TARGET_MYRIAD);
+               ((backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 || backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) && preferableTarget != DNN_TARGET_MYRIAD);
     }
 
     bool getMemoryShapes(const std::vector<MatShape> &inputs,
@@ -322,10 +327,9 @@ public:
         layerOutputs[0].col(2).copyTo(dst);
     }
 
+#ifdef HAVE_INF_ENGINE
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
-#ifdef HAVE_INF_ENGINE
-#if INF_ENGINE_VER_MAJOR_GE(INF_ENGINE_RELEASE_2018R5)
         InferenceEngine::Builder::ProposalLayer ieLayer(name);
 
         ieLayer.setBaseSize(baseSize);
@@ -346,36 +350,47 @@ public:
         ieLayer.setRatio(ratiosVec);
 
         return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-#else
-        InferenceEngine::LayerParams lp;
-        lp.name = name;
-        lp.type = "Proposal";
-        lp.precision = InferenceEngine::Precision::FP32;
-        std::shared_ptr<InferenceEngine::CNNLayer> ieLayer(new InferenceEngine::CNNLayer(lp));
-
-        ieLayer->params["base_size"] = format("%d", baseSize);
-        ieLayer->params["feat_stride"] = format("%d", featStride);
-        ieLayer->params["min_size"] = "16";
-        ieLayer->params["nms_thresh"] = format("%f", nmsThreshold);
-        ieLayer->params["post_nms_topn"] = format("%d", keepTopAfterNMS);
-        ieLayer->params["pre_nms_topn"] = format("%d", keepTopBeforeNMS);
-        if (ratios.size())
-        {
-            ieLayer->params["ratio"] = format("%f", ratios.get<float>(0));
-            for (int i = 1; i < ratios.size(); ++i)
-                ieLayer->params["ratio"] += format(",%f", ratios.get<float>(i));
-        }
-        if (scales.size())
-        {
-            ieLayer->params["scale"] = format("%f", scales.get<float>(0));
-            for (int i = 1; i < scales.size(); ++i)
-                ieLayer->params["scale"] += format(",%f", scales.get<float>(i));
-        }
-        return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
-#endif
-#endif  // HAVE_INF_ENGINE
-        return Ptr<BackendNode>();
     }
+#endif  // HAVE_INF_ENGINE
+
+
+#ifdef HAVE_DNN_NGRAPH
+    virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
+                                        const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        CV_Assert(nodes.size() == 3);
+        ngraph::op::ProposalAttrs attr;
+        attr.base_size     = baseSize;
+        attr.nms_thresh    = nmsThreshold;
+        attr.feat_stride   = featStride;
+        attr.min_size      = 16;
+        attr.pre_nms_topn  = keepTopBeforeNMS;
+        attr.post_nms_topn = keepTopAfterNMS;
+
+        std::vector<float> ratiosVec(ratios.size());
+        for (int i = 0; i < ratios.size(); ++i)
+            ratiosVec[i] = ratios.get<float>(i);
+        attr.ratio = ratiosVec;
+
+        std::vector<float> scalesVec(scales.size());
+        for (int i = 0; i < scales.size(); ++i)
+            scalesVec[i] = scales.get<float>(i);
+        attr.scale = scalesVec;
+
+        auto& class_probs  = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
+        auto& class_logits = nodes[1].dynamicCast<InfEngineNgraphNode>()->node;
+        auto& image_shape  = nodes[2].dynamicCast<InfEngineNgraphNode>()->node;
+
+        CV_Assert_N(image_shape->get_shape().size() == 2, image_shape->get_shape().front() == 1);
+        auto shape   = std::make_shared<ngraph::op::Constant>(ngraph::element::i64,
+                       ngraph::Shape{1},
+                       std::vector<int64_t>{(int64_t)image_shape->get_shape().back()});
+        auto reshape = std::make_shared<ngraph::op::v1::Reshape>(image_shape, shape, true);
+
+        auto proposal = std::make_shared<ngraph::op::Proposal>(class_probs, class_logits, reshape, attr);
+        return Ptr<BackendNode>(new InfEngineNgraphNode(proposal));
+    }
+#endif  // HAVE_DNN_NGRAPH
 
 private:
     // A first half of channels are background scores. We need only a second one.

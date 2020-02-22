@@ -12,8 +12,8 @@
 
 #include "logger.hpp" // GAPI_LOG
 
-#include "opencv2/gapi/gcomputation.hpp"
-#include "opencv2/gapi/gkernel.hpp"
+#include <opencv2/gapi/gcomputation.hpp>
+#include <opencv2/gapi/gkernel.hpp>
 
 #include "api/gcomputation_priv.hpp"
 #include "api/gcall_priv.hpp"
@@ -74,6 +74,18 @@ cv::GCompiled cv::GComputation::compile(GMetaArgs &&metas, GCompileArgs &&args)
     // FIXME: Cache gcompiled per parameters here?
     cv::gimpl::GCompiler comp(*this, std::move(metas), std::move(args));
     return comp.compile();
+}
+
+cv::GStreamingCompiled cv::GComputation::compileStreaming(GMetaArgs &&metas, GCompileArgs &&args)
+{
+    cv::gimpl::GCompiler comp(*this, std::move(metas), std::move(args));
+    return comp.compileStreaming();
+}
+
+cv::GStreamingCompiled cv::GComputation::compileStreaming(GCompileArgs &&args)
+{
+    cv::gimpl::GCompiler comp(*this, {}, std::move(args));
+    return comp.compileStreaming();
 }
 
 // FIXME: Introduce similar query/test method for GMetaArgs as a building block
